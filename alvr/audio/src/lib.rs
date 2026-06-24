@@ -8,9 +8,8 @@ pub mod linux;
 pub use crate::windows::*;
 
 use alvr_common::{
-    anyhow::{self, anyhow, bail, Context, Result},
+    anyhow::{self, bail, Context, Result},
     info,
-    once_cell::sync::Lazy,
     parking_lot::Mutex,
     ConnectionError, ToAny,
 };
@@ -18,67 +17,198 @@ use alvr_session::{AudioBufferingConfig, CustomAudioDeviceConfig, MicrophoneDevi
 use alvr_sockets::{StreamReceiver, StreamSender};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    BufferSize, Device, Host, Sample, SampleFormat, StreamConfig,
+    BufferSize, Device, Sample, SampleFormat, StreamConfig,
 };
 use rodio::{OutputStream, Source};
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-    thread,
-    time::Duration,
-};
+use std::{collections::VecDeque, sync::Arc, thread, time::Duration};
 
-static VIRTUAL_MICROPHONE_PAIRS: Lazy<HashMap<&str, &str>> = Lazy::new(|| {
-    [
-        ("CABLE Input", "CABLE Output"),
-        ("VoiceMeeter Input", "VoiceMeeter Output"),
-        ("VoiceMeeter Aux Input", "VoiceMeeter Aux Output"),
-        ("VoiceMeeter VAIO3 Input", "VoiceMeeter VAIO3 Output"),
-        ("Virtual Cable 1", "Virtual Cable 2"),
-    ]
-    .into_iter()
-    .collect()
-});
-
-fn device_from_custom_config(host: &Host, config: &CustomAudioDeviceConfig) -> Result<Device> {
+fn device_from_custom_config(
+    devices: &[Device],
+    config: &CustomAudioDeviceConfig,
+) -> Result<Device> {
     Ok(match config {
-        CustomAudioDeviceConfig::NameSubstring(name_substring) => host
-            .devices()?
+        CustomAudioDeviceConfig::NameSubstring(name_substring) => devices
+            .iter()
             .find(|d| {
                 d.name()
                     .map(|name| name.to_lowercase().contains(&name_substring.to_lowercase()))
                     .unwrap_or(false)
             })
+            .cloned()
             .with_context(|| {
                 format!("Cannot find audio device which name contains \"{name_substring}\"")
             })?,
-        CustomAudioDeviceConfig::Index(index) => host
-            .devices()?
-            .nth(*index)
+        CustomAudioDeviceConfig::Index(index) => devices
+            .get(*index)
+            .cloned()
             .with_context(|| format!("Cannot find audio device at index {index}"))?,
     })
 }
 
-fn microphone_pair_from_sink_name(host: &Host, sink_name: &str) -> Result<(Device, Device)> {
-    let sink = host
-        .output_devices()?
-        .find(|d| d.name().unwrap_or_default().contains(sink_name))
-        .context("VB-CABLE or Voice Meeter not found. Please install or reinstall either one")?;
+fn normalized_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
 
-    if let Some(source_name) = VIRTUAL_MICROPHONE_PAIRS.get(sink_name) {
-        Ok((
-            sink,
-            host.input_devices()?
-                .find(|d| {
-                    d.name()
-                        .map(|name| name.contains(source_name))
-                        .unwrap_or(false)
-                })
-                .context("Matching output microphone not found. Did you rename it?")?,
-        ))
-    } else {
-        unreachable!("Invalid argument")
+fn contains_name_phrase(name: &str, candidate: &str) -> bool {
+    let name = name.to_lowercase();
+    let candidate = candidate.to_lowercase();
+
+    let mut start = 0;
+    while let Some(offset) = name[start..].find(&candidate) {
+        let match_start = start + offset;
+        let match_end = match_start + candidate.len();
+
+        let before_ok = name[..match_start]
+            .chars()
+            .next_back()
+            .map(|c| !c.is_alphanumeric())
+            .unwrap_or(true);
+        let after_ok = name[match_end..]
+            .chars()
+            .next()
+            .map(|c| !c.is_alphanumeric())
+            .unwrap_or(true);
+
+        if before_ok && after_ok {
+            return true;
+        }
+
+        start = match_end;
     }
+
+    false
+}
+
+fn device_name_matches_candidate(name: &str, candidate: &str) -> bool {
+    normalized_name(name) == normalized_name(candidate) || contains_name_phrase(name, candidate)
+}
+
+fn find_device_by_name_candidates(devices: &[Device], candidates: &[&str]) -> Option<Device> {
+    candidates.iter().find_map(|candidate| {
+        devices
+            .iter()
+            .find(|device| {
+                device
+                    .name()
+                    .map(|name| device_name_matches_candidate(&name, candidate))
+                    .unwrap_or(false)
+            })
+            .cloned()
+    })
+}
+
+fn device_names_for_error(devices: &[Device]) -> String {
+    let names = devices
+        .iter()
+        .filter_map(|device| device.name().ok())
+        .collect::<Vec<_>>();
+
+    if names.is_empty() {
+        "<none>".into()
+    } else {
+        names.join(", ")
+    }
+}
+
+fn microphone_config_name(config: &MicrophoneDevicesConfig) -> &'static str {
+    match config {
+        MicrophoneDevicesConfig::Automatic => "Automatic",
+        MicrophoneDevicesConfig::VAC => "Virtual Audio Cable",
+        MicrophoneDevicesConfig::VBCable => "VB-CABLE",
+        MicrophoneDevicesConfig::VoiceMeeter => "VoiceMeeter",
+        MicrophoneDevicesConfig::VoiceMeeterAux => "VoiceMeeter Aux",
+        MicrophoneDevicesConfig::VoiceMeeterVaio3 => "VoiceMeeter VAIO3",
+        MicrophoneDevicesConfig::Custom { .. } => "Custom",
+    }
+}
+
+fn virtual_microphone_name_candidates(
+    config: &MicrophoneDevicesConfig,
+) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    match config {
+        MicrophoneDevicesConfig::VAC => Some((
+            &["Line 1", "Virtual Cable 1", "Virtual Audio Cable"],
+            &["Line 1", "Virtual Cable 2", "Virtual Audio Cable"],
+        )),
+        MicrophoneDevicesConfig::VBCable => Some((
+            &["CABLE Input", "VB-Audio Virtual Cable"],
+            &["CABLE Output", "VB-Audio Virtual Cable"],
+        )),
+        MicrophoneDevicesConfig::VoiceMeeter => Some((
+            &["VoiceMeeter Input", "Voicemeeter Input", "VoiceMeeter VAIO"],
+            &[
+                "VoiceMeeter Output",
+                "Voicemeeter Output",
+                "VoiceMeeter VAIO",
+                "Voicemeeter Out B1",
+            ],
+        )),
+        MicrophoneDevicesConfig::VoiceMeeterAux => Some((
+            &["VoiceMeeter Aux Input", "Voicemeeter Aux Input"],
+            &[
+                "VoiceMeeter Aux Output",
+                "Voicemeeter Aux Output",
+                "Voicemeeter Out B2",
+            ],
+        )),
+        MicrophoneDevicesConfig::VoiceMeeterVaio3 => Some((
+            &[
+                "VoiceMeeter VAIO3 Input",
+                "Voicemeeter VAIO3 Input",
+                "VoiceMeeter VAIO3",
+                "Voicemeeter VAIO3",
+            ],
+            &[
+                "VoiceMeeter VAIO3 Output",
+                "Voicemeeter VAIO3 Output",
+                "VoiceMeeter VAIO3",
+                "Voicemeeter VAIO3",
+                "Voicemeeter Out B3",
+            ],
+        )),
+        MicrophoneDevicesConfig::Automatic | MicrophoneDevicesConfig::Custom { .. } => None,
+    }
+}
+
+fn virtual_microphone_pair_from_devices(
+    output_devices: &[Device],
+    input_devices: &[Device],
+    config: &MicrophoneDevicesConfig,
+) -> Result<(Device, Device)> {
+    if let MicrophoneDevicesConfig::Custom { sink, source } = config {
+        return Ok((
+            device_from_custom_config(output_devices, sink)?,
+            device_from_custom_config(input_devices, source)?,
+        ));
+    }
+
+    let Some((sink_candidates, source_candidates)) = virtual_microphone_name_candidates(config)
+    else {
+        bail!("Unsupported microphone device config");
+    };
+
+    let sink =
+        find_device_by_name_candidates(output_devices, sink_candidates).with_context(|| {
+            format!(
+                "{} output device not found. Available output devices: {}",
+                microphone_config_name(config),
+                device_names_for_error(output_devices)
+            )
+        })?;
+
+    let source =
+        find_device_by_name_candidates(input_devices, source_candidates).with_context(|| {
+            format!(
+                "{} input device not found. Available input devices: {}",
+                microphone_config_name(config),
+                device_names_for_error(input_devices)
+            )
+        })?;
+
+    Ok((sink, source))
 }
 
 #[allow(dead_code)]
@@ -91,12 +221,13 @@ pub struct AudioDevice {
 impl AudioDevice {
     pub fn new_output(config: Option<&CustomAudioDeviceConfig>) -> Result<Self> {
         let host = cpal::default_host();
+        let output_devices = host.output_devices()?.collect::<Vec<_>>();
 
         let device = match config {
             None => host
                 .default_output_device()
                 .context("No output audio device found")?,
-            Some(config) => device_from_custom_config(&host, config)?,
+            Some(config) => device_from_custom_config(&output_devices, config)?,
         };
 
         Ok(Self {
@@ -107,12 +238,13 @@ impl AudioDevice {
 
     pub fn new_input(config: Option<CustomAudioDeviceConfig>) -> Result<Self> {
         let host = cpal::default_host();
+        let input_devices = host.input_devices()?.collect::<Vec<_>>();
 
         let device = match config {
             None => host
                 .default_input_device()
                 .context("No input audio device found")?,
-            Some(config) => device_from_custom_config(&host, &config)?,
+            Some(config) => device_from_custom_config(&input_devices, &config)?,
         };
 
         Ok(Self {
@@ -124,38 +256,50 @@ impl AudioDevice {
     // returns (sink, source)
     pub fn new_virtual_microphone_pair(config: MicrophoneDevicesConfig) -> Result<(Self, Self)> {
         let host = cpal::default_host();
+        let output_devices = host.output_devices()?.collect::<Vec<_>>();
+        let input_devices = host.input_devices()?.collect::<Vec<_>>();
 
         let (sink, source) = match config {
             MicrophoneDevicesConfig::Automatic => {
-                let mut pair = Err(anyhow!("No microphones found"));
-                for sink_name in VIRTUAL_MICROPHONE_PAIRS.keys() {
-                    pair = microphone_pair_from_sink_name(&host, sink_name);
-                    if pair.is_ok() {
-                        break;
+                let configs = [
+                    MicrophoneDevicesConfig::VAC,
+                    MicrophoneDevicesConfig::VBCable,
+                    MicrophoneDevicesConfig::VoiceMeeter,
+                    MicrophoneDevicesConfig::VoiceMeeterAux,
+                    MicrophoneDevicesConfig::VoiceMeeterVaio3,
+                ];
+                let mut errors = vec![];
+
+                for cable_type in configs {
+                    match virtual_microphone_pair_from_devices(
+                        &output_devices,
+                        &input_devices,
+                        &cable_type,
+                    ) {
+                        Ok(pair) => {
+                            return Ok((
+                                Self {
+                                    inner: pair.0,
+                                    is_output: true,
+                                },
+                                Self {
+                                    inner: pair.1,
+                                    is_output: false,
+                                },
+                            ))
+                        }
+                        Err(e) => {
+                            errors.push(format!("{}: {e:#}", microphone_config_name(&cable_type)))
+                        }
                     }
                 }
 
-                pair?
+                bail!(
+                    "No virtual microphone pair found. Tried: {}",
+                    errors.join("; ")
+                )
             }
-            MicrophoneDevicesConfig::VAC => {
-                microphone_pair_from_sink_name(&host, "Virtual Cable 1")?
-            }
-            MicrophoneDevicesConfig::VBCable => {
-                microphone_pair_from_sink_name(&host, "CABLE Input")?
-            }
-            MicrophoneDevicesConfig::VoiceMeeter => {
-                microphone_pair_from_sink_name(&host, "VoiceMeeter Input")?
-            }
-            MicrophoneDevicesConfig::VoiceMeeterAux => {
-                microphone_pair_from_sink_name(&host, "VoiceMeeter Aux Input")?
-            }
-            MicrophoneDevicesConfig::VoiceMeeterVaio3 => {
-                microphone_pair_from_sink_name(&host, "VoiceMeeter VAIO3 Input")?
-            }
-            MicrophoneDevicesConfig::Custom { sink, source } => (
-                device_from_custom_config(&host, &sink)?,
-                device_from_custom_config(&host, &source)?,
-            ),
+            _ => virtual_microphone_pair_from_devices(&output_devices, &input_devices, &config)?,
         };
 
         Ok((
@@ -179,11 +323,15 @@ impl AudioDevice {
 
         Ok(config.sample_rate().0)
     }
+
+    pub fn name(&self) -> Result<String> {
+        Ok(self.inner.name()?)
+    }
 }
 
 pub fn is_same_device(device1: &AudioDevice, device2: &AudioDevice) -> bool {
     if let (Ok(name1), Ok(name2)) = (device1.inner.name(), device2.inner.name()) {
-        name1 == name2
+        name1 == name2 && device1.is_output == device2.is_output
     } else {
         false
     }

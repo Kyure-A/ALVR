@@ -7,7 +7,14 @@
 Stream VR games from your PC to your headset via Wi-Fi.
 This is a fork of [ALVR](https://github.com/polygraphene/ALVR).
 
+## Fork maintenance target
+
+This fork is pinned to ALVR v20.14.0 for Quest 3 client compatibility. It does
+not track the latest upstream branch by default; fixes are selectively
+backported when they are needed for the v20.14.0 server/client protocol.
+
 ### Direct download to the latest version:
+These links point to upstream ALVR releases, not this v20.14.0-pinned fork.
 ### [Windows Launcher](https://github.com/alvr-org/ALVR/releases/latest/download/alvr_launcher_windows.zip) | [Linux Launcher](https://github.com/alvr-org/ALVR/releases/latest/download/alvr_launcher_linux.tar.gz)
 
 ## Compatibility
