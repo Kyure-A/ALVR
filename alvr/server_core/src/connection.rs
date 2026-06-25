@@ -954,9 +954,7 @@ fn connection_pipeline(
                 {
                     #[cfg(windows)]
                     if let Err(e) = alvr_audio::windows::initialize_com() {
-                        warn!(
-                            "Failed to initialize Windows COM in game audio thread: {e:?}"
-                        );
+                        warn!("Failed to initialize Windows COM in game audio thread: {e:?}");
                         return;
                     }
 
@@ -1039,9 +1037,7 @@ fn connection_pipeline(
             {
                 #[cfg(windows)]
                 if let Err(e) = alvr_audio::windows::initialize_com() {
-                    warn!(
-                        "Failed to initialize Windows COM in microphone thread: {e:?}"
-                    );
+                    warn!("Failed to initialize Windows COM in microphone thread: {e:?}");
                     return;
                 }
 
