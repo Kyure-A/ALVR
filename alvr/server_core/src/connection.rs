@@ -967,6 +967,7 @@ fn connection_pipeline(
                             })
                             .ok();
                     } else {
+                        thread::sleep(RETRY_CONNECT_MIN_INTERVAL);
                         continue;
                     };
 

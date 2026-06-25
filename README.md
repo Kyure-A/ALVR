@@ -40,7 +40,7 @@ the current priority.
 - [x] **Backport upstream #2918**: Remove audio device enumeration from the
       dashboard headset speaker dropdown. This avoids slow/broken hardware
       queries that can block startup and contribute to handshake timeouts.
-- [ ] **Fix game-audio retry busy-loop**: Sleep `RETRY_CONNECT_MIN_INTERVAL`
+- [x] **Fix game-audio retry busy-loop**: Sleep `RETRY_CONNECT_MIN_INTERVAL`
       before `continue` when `get_windows_device_id()` fails, so a missing
       device does not spin the thread.
 - [ ] **Strengthen audio error logging**: Log errors from
