@@ -20,14 +20,16 @@ fn normalize_device_name(name: &str) -> String {
         .collect()
 }
 
+pub fn initialize_com() -> Result<()> {
+    unsafe { Com::CoInitializeEx(None, COINIT_MULTITHREADED)? };
+    Ok(())
+}
+
 fn get_windows_device(device: &AudioDevice) -> Result<IMMDevice> {
     let device_name = device.inner.name()?;
     let normalized_device_name = normalize_device_name(&device_name);
 
     unsafe {
-        // This will fail the second time is called, ignore the error
-        Com::CoInitializeEx(None, COINIT_MULTITHREADED).ok().ok();
-
         let imm_device_enumerator: IMMDeviceEnumerator =
             Com::CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
 

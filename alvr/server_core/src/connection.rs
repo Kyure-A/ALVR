@@ -952,6 +952,14 @@ fn connection_pipeline(
 
                 #[cfg(not(target_os = "linux"))]
                 {
+                    #[cfg(windows)]
+                    if let Err(e) = alvr_audio::windows::initialize_com() {
+                        warn!(
+                            "Failed to initialize Windows COM in game audio thread: {e:?}"
+                        );
+                        return;
+                    }
+
                     let mut retry_interval = MIN_AUDIO_RETRY_INTERVAL;
 
                     let device = match alvr_audio::AudioDevice::new_output(config.device.as_ref()) {
@@ -1029,6 +1037,14 @@ fn connection_pipeline(
         thread::spawn(move || {
             #[cfg(not(target_os = "linux"))]
             {
+                #[cfg(windows)]
+                if let Err(e) = alvr_audio::windows::initialize_com() {
+                    warn!(
+                        "Failed to initialize Windows COM in microphone thread: {e:?}"
+                    );
+                    return;
+                }
+
                 let mut last_init_error = String::new();
                 let mut last_pair_names: Option<(String, String)> = None;
 
