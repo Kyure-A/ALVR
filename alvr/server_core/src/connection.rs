@@ -45,7 +45,14 @@ const HANDSHAKE_ACTION_TIMEOUT: Duration = Duration::from_secs(2);
 pub const STREAMING_RECV_TIMEOUT: Duration = Duration::from_millis(500);
 const REAL_TIME_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 
+const MIN_AUDIO_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+const MAX_AUDIO_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
 const MAX_UNREAD_PACKETS: usize = 10; // Applies per stream
+
+fn next_audio_retry_interval(current: Duration) -> Duration {
+    (current * 2).clamp(MIN_AUDIO_RETRY_INTERVAL, MAX_AUDIO_RETRY_INTERVAL)
+}
 
 pub struct VideoPacket {
     pub header: VideoPacketHeader,
@@ -945,11 +952,14 @@ fn connection_pipeline(
 
                 #[cfg(not(target_os = "linux"))]
                 {
+                    let mut retry_interval = MIN_AUDIO_RETRY_INTERVAL;
+
                     let device = match alvr_audio::AudioDevice::new_output(config.device.as_ref()) {
                         Ok(data) => data,
                         Err(e) => {
                             warn!("New audio device failed: {e:?}");
-                            thread::sleep(RETRY_CONNECT_MIN_INTERVAL);
+                            thread::sleep(retry_interval);
+                            retry_interval = next_audio_retry_interval(retry_interval);
                             continue;
                         }
                     };
@@ -966,8 +976,10 @@ fn connection_pipeline(
                                 prop,
                             })
                             .ok();
+                        retry_interval = MIN_AUDIO_RETRY_INTERVAL;
                     } else {
-                        thread::sleep(RETRY_CONNECT_MIN_INTERVAL);
+                        thread::sleep(retry_interval);
+                        retry_interval = next_audio_retry_interval(retry_interval);
                         continue;
                     };
 
@@ -982,6 +994,8 @@ fn connection_pipeline(
                         config.mute_when_streaming,
                     ) {
                         error!("Audio record error: {e:?}");
+                        thread::sleep(retry_interval);
+                        retry_interval = next_audio_retry_interval(retry_interval);
                     }
 
                     #[cfg(windows)]
@@ -1018,12 +1032,14 @@ fn connection_pipeline(
                 let mut last_init_error = String::new();
                 let mut last_pair_names: Option<(String, String)> = None;
 
+                let mut retry_interval = MIN_AUDIO_RETRY_INTERVAL;
                 while is_streaming(&client_hostname) {
                     let (sink, source) = match alvr_audio::AudioDevice::new_virtual_microphone_pair(
                         config.devices.clone(),
                     ) {
                         Ok(pair) => {
                             last_init_error.clear();
+                            retry_interval = MIN_AUDIO_RETRY_INTERVAL;
                             pair
                         }
                         Err(e) => {
@@ -1038,11 +1054,12 @@ fn connection_pipeline(
                             if !drain_microphone_packets(
                                 &client_hostname,
                                 &mut microphone_receiver,
-                                RETRY_CONNECT_MIN_INTERVAL,
+                                retry_interval,
                             ) {
                                 return;
                             }
 
+                            retry_interval = next_audio_retry_interval(retry_interval);
                             continue;
                         }
                     };
@@ -1082,11 +1099,12 @@ fn connection_pipeline(
                             if !drain_microphone_packets(
                                 &client_hostname,
                                 &mut microphone_receiver,
-                                RETRY_CONNECT_MIN_INTERVAL,
+                                retry_interval,
                             ) {
                                 return;
                             }
 
+                            retry_interval = next_audio_retry_interval(retry_interval);
                             continue;
                         }
                     }
@@ -1107,10 +1125,12 @@ fn connection_pipeline(
                         if !drain_microphone_packets(
                             &client_hostname,
                             &mut microphone_receiver,
-                            RETRY_CONNECT_MIN_INTERVAL,
+                            retry_interval,
                         ) {
                             return;
                         }
+
+                        retry_interval = next_audio_retry_interval(retry_interval);
                     }
                 }
             }
