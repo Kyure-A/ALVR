@@ -1,97 +1,88 @@
-<p align="center"> <img width="500" src="resources/ALVR-Grey.svg"/> </p>
+# ALVR v20.14.0 Quest 3 Server Fork
 
-# ALVR - Air Light VR
+This fork is pinned to **ALVR v20.14.0** for compatibility with an existing
+Quest 3 client APK. It intentionally does not track upstream `master`.
 
-[![badge-discord][]][link-discord] [![badge-matrix][]][link-matrix] [![badge-opencollective][]][link-opencollective]
+The purpose of this branch is narrow:
 
-Stream VR games from your PC to your headset via Wi-Fi.
-This is a fork of [ALVR](https://github.com/polygraphene/ALVR).
+- keep the v20.14.0 server/client protocol intact
+- avoid rebuilding or replacing the Quest 3 APK
+- backport only server-side fixes needed for this setup
+- improve Windows virtual microphone handling without pulling in newer ALVR protocol changes
 
-## Fork maintenance target
+## Included Fix
 
-This fork is pinned to ALVR v20.14.0 for Quest 3 client compatibility. It does
-not track the latest upstream branch by default; fixes are selectively
-backported when they are needed for the v20.14.0 server/client protocol.
+This fork adds a Windows server-side microphone stability fix for the v20.14.0
+streamer. It improves virtual microphone device matching for VAC, VB-CABLE, and
+VoiceMeeter, avoids treating microphone initialization failures as fatal
+handshake errors, retries microphone initialization while streaming, and logs the
+selected microphone sink/source devices.
 
-### Direct download to the latest version:
-These links point to upstream ALVR releases, not this v20.14.0-pinned fork.
-### [Windows Launcher](https://github.com/alvr-org/ALVR/releases/latest/download/alvr_launcher_windows.zip) | [Linux Launcher](https://github.com/alvr-org/ALVR/releases/latest/download/alvr_launcher_linux.tar.gz)
+The fix targets issues like ALVR 20.14.0 failing to start a stream when
+microphone support is enabled and a virtual microphone pair cannot be resolved
+cleanly.
 
-## Compatibility
+## Build
 
-|          VR Headset          |                                        Support                                         |
-| :--------------------------: | :------------------------------------------------------------------------------------: |
-|       Apple Vision Pro       |    :heavy_check_mark: ([store link](https://apps.apple.com/app/alvr/id6479728026))     |
-|      Quest 1/2/3/3S/Pro      | :heavy_check_mark: ([store link](https://www.meta.com/experiences/7674846229245715) *) |
-|     Pico Neo 3/4/4 Ultra     |                                   :heavy_check_mark:                                   |
-|    Play For Dream YVR 1/2/MR |                                   :heavy_check_mark:                                   |
-| Vive Focus 3/Vision/XR Elite |                                   :heavy_check_mark:                                   |
-|           Lynx R1            |                                   :heavy_check_mark:                                   |
-|     PhoneVR (smartphone)     |     :heavy_check_mark: ** ([repo](https://github.com/PhoneVR-Developers/PhoneVR))      |
-|        Android/Monado        |                                      :warning: **                                      |
-|          Oculus Go           |                 :x: ([old repo](https://github.com/polygraphene/ALVR))                 |
+### Windows prerequisites
 
-\* : ALVR for Quest 1 not available through the Meta store.  
-\** : Only works on some smartphones, not enough testing.  
+The upstream build scripts expect a Windows development environment with
+Chocolatey available. Install Chocolatey before running the ALVR dependency/build
+steps, then use the regular ALVR Windows build setup for Visual Studio Build
+Tools, Rust, and the native dependencies.
 
-|     PC OS      |                                    Support                                    |
-| :------------: | :---------------------------------------------------------------------------: |
-| Windows 10/11  | :heavy_check_mark: ([store link](https://store.steampowered.com/app/3312710)) |
-| Windows XP/7/8 |                                      :x:                                      |
-|     Linux      |                             :heavy_check_mark:***                             |
-|     macOS      |                                      :x:                                      |
+Build the streamer from this pinned branch:
 
-\*** : Linux support is still in beta. To be able to make audio work or run ALVR at all you may need advanced knowledge of your distro for debugging or building from source.
+```powershell
+cargo xtask build-streamer --release
+```
 
-### Requirements
+The Windows portable output is expected under:
 
--   A supported standalone VR headset (see compatibility table above)
+```text
+build\alvr_streamer_windows
+```
 
--   SteamVR
+Register that directory as the SteamVR driver root, not `target\release`:
 
--   High-end gaming PC
-    -   See OS compatibility table above.
-    -   NVIDIA GPU that supports NVENC (1000 GTX Series or higher) (or with an AMD GPU that supports AMF VCE) with the latest driver.
-    -   Laptops with an onboard (Intel HD, AMD iGPU) and an additional dedicated GPU (NVidia GTX/RTX, AMD HD/R5/R7): you should assign the dedicated GPU or "high performance graphics adapter" to the applications ALVR, SteamVR for best performance and compatibility. (NVidia: Nvidia control panel->3d settings->application settings; AMD: similiar way)
+```powershell
+vrpathreg.exe adddriver "C:\path\to\ALVR\build\alvr_streamer_windows"
+```
 
--   802.11ac 5Ghz wireless or ethernet wired connection
-    -   It is recommended to use 802.11ac 5Ghz for the headset and ethernet for PC
-    -   You need to connect both the PC and the headset to same router (or use a routed connection as described [here](https://github.com/alvr-org/ALVR/wiki/ALVR-v14-and-Above))
+Useful sanity checks:
 
-## Install
+```powershell
+Test-Path .\build\alvr_streamer_windows\driver.vrdrivermanifest
+Test-Path .\build\alvr_streamer_windows\bin\win64\driver_alvr_server.dll
+Test-Path ".\build\alvr_streamer_windows\ALVR Dashboard.exe"
+vrpathreg.exe show
+```
 
-Follow the installation guide [here](https://github.com/alvr-org/ALVR/wiki/Installation-guide).
+`vrpathreg.exe show` should list `alvr_server` with the
+`build\alvr_streamer_windows` path. If it shows `[ NO DRIVER NAME FOUND ]` for
+`target\release`, remove that bad registration and add the build output instead:
 
-## Troubleshooting
+```powershell
+vrpathreg.exe removedriver "C:\path\to\ALVR\target\release"
+vrpathreg.exe adddriver "C:\path\to\ALVR\build\alvr_streamer_windows"
+```
 
--   Please check the [Troubleshooting](https://github.com/alvr-org/ALVR/wiki/Troubleshooting) page, and also [Linux Troubleshooting](https://github.com/alvr-org/ALVR/wiki/Linux-Troubleshooting) if applicable.
--   Configuration recommendations and information may be found [here](https://github.com/alvr-org/ALVR/wiki/Information-and-Recommendations)
+Do not copy or register `target\release` directly. Cargo may place
+`alvr_server_openvr.dll` there, but `xtask build-streamer` packages it as:
 
-## Uninstall
+```text
+build\alvr_streamer_windows\bin\win64\driver_alvr_server.dll
+```
 
-Open `ALVR Dashboard.exe`, go to `Installation` tab then press `Remove firewall rules`. Close ALVR window and delete the ALVR folder.
+## Notes
 
-## Build from source
-
-You can follow the guide [here](https://github.com/alvr-org/ALVR/wiki/Building-From-Source).
+- Do not use GitHub's "Sync fork" button unless you intentionally want to leave
+  the v20.14.0 maintenance line.
+- Upstream ALVR documentation and general project information live at
+  <https://github.com/alvr-org/ALVR>.
+- This fork is for a specific v20.14.0 Quest 3 workflow, not a replacement for
+  upstream ALVR releases.
 
 ## License
 
 ALVR is licensed under the [MIT License](LICENSE).
-
-## Privacy policy
-
-ALVR apps do not directly collect any kind of data.
-
-## Donate
-
-If you want to support this project you can make a donation to our [Open Source Collective account](https://opencollective.com/alvr).
-
-You can also donate to the original author of ALVR using Paypal (polygraphene@gmail.com) or with bitcoin (1FCbmFVSjsmpnAj6oLx2EhnzQzzhyxTLEv).
-
-[badge-discord]: https://img.shields.io/discord/720612397580025886?style=for-the-badge&logo=discord&color=5865F2 "Join us on Discord"
-[link-discord]: https://discord.gg/ALVR
-[badge-matrix]: https://img.shields.io/static/v1?label=chat&message=%23alvr&style=for-the-badge&logo=matrix&color=blueviolet "Join us on Matrix"
-[link-matrix]: https://matrix.to/#/#alvr:ckie.dev?via=ckie.dev
-[badge-opencollective]: https://img.shields.io/opencollective/all/alvr?style=for-the-badge&logo=opencollective&color=79a3e6 "Donate"
-[link-opencollective]: https://opencollective.com/alvr
