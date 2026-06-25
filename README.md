@@ -37,7 +37,7 @@ the current priority.
       specialize the release for Windows-only server builds, and make the
       workflow manually triggerable so Windows binaries can be built and released
       without a local Windows environment.
-- [ ] **Backport upstream #2918**: Remove audio device enumeration from the
+- [x] **Backport upstream #2918**: Remove audio device enumeration from the
       dashboard headset speaker dropdown. This avoids slow/broken hardware
       queries that can block startup and contribute to handshake timeouts.
 - [ ] **Fix game-audio retry busy-loop**: Sleep `RETRY_CONNECT_MIN_INTERVAL`
