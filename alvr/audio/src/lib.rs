@@ -11,7 +11,7 @@ use alvr_common::{
     anyhow::{self, bail, Context, Result},
     info,
     parking_lot::Mutex,
-    ConnectionError, ToAny,
+    warn, ConnectionError, ToAny,
 };
 use alvr_session::{AudioBufferingConfig, CustomAudioDeviceConfig, MicrophoneDevicesConfig};
 use alvr_sockets::{StreamReceiver, StreamSender};
@@ -510,7 +510,9 @@ pub fn record_audio_blocking(
                 if is_running() {
                     let mut buffer = sender.get_buffer(&()).unwrap();
                     buffer.get_range_mut(0, data.len()).copy_from_slice(&data);
-                    sender.send(buffer).ok();
+                    if let Err(e) = sender.send(buffer) {
+                        warn!("Failed to send audio packet: {e:?}");
+                    }
                 } else {
                     *state.lock() = AudioRecordState::ShouldStop;
                 }
@@ -760,15 +762,16 @@ pub fn play_audio_loop(
         batch_frames_count,
     })?;
 
-    receive_samples_loop(
+    if let Err(e) = receive_samples_loop(
         is_running,
         receiver,
         sample_buffer,
         channels_count as _,
         batch_frames_count,
         average_buffer_frames_count,
-    )
-    .ok();
+    ) {
+        warn!("Microphone receive sample loop error: {e:?}");
+    }
 
     Ok(())
 }

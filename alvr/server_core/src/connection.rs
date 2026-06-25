@@ -1102,7 +1102,7 @@ fn connection_pipeline(
                         config.buffering.clone(),
                         &mut microphone_receiver,
                     ) {
-                        warn!("Microphone playback initialization failed; retrying: {e:?}");
+                        warn!("Microphone playback initialization failed; retrying: {e:#}");
 
                         if !drain_microphone_packets(
                             &client_hostname,

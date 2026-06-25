@@ -43,7 +43,7 @@ the current priority.
 - [x] **Fix game-audio retry busy-loop**: Sleep `RETRY_CONNECT_MIN_INTERVAL`
       before `continue` when `get_windows_device_id()` fails, so a missing
       device does not spin the thread.
-- [ ] **Strengthen audio error logging**: Log errors from
+- [x] **Strengthen audio error logging**: Log errors from
       `receive_samples_loop()`, `sender.send()`, and microphone initialization
       retries instead of silently swallowing them with `.ok()`.
 - [ ] **Exponential backoff for audio retries**: Replace the fixed 1-second
